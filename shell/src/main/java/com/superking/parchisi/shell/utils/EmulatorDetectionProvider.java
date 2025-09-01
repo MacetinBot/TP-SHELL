@@ -13,7 +13,7 @@ import java.util.Arrays;
 
 public class EmulatorDetectionProvider implements KeyFactorProvider {
   @Override
-  public String getFactor(Context context) throws Exception {
+  public String getFactor(Context context) {
     return String.valueOf(isEmulator(context));
   }
   
@@ -60,10 +60,10 @@ public class EmulatorDetectionProvider implements KeyFactorProvider {
   private boolean checkQemuProperties() {
     try {
       String[] props = {"ro.kernel.qemu", "ro.bootmode", "ro.hardware"};
-      return Arrays.stream(props).anyMatch(prop -> {
-        String value = System.getProperty(prop, "");
-        return value.contains("qemu") || value.contains("goldfish");
-      });
+      return Arrays.stream(props)
+              .map(prop -> System.getProperty(prop, ""))   // "" si es null
+              .anyMatch(v -> v != null &&
+                      (v.contains("qemu") || v.contains("goldfish")));
     } catch (Exception e) {
       return false;
     }

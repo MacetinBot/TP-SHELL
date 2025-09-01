@@ -6,7 +6,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Arrays;
@@ -67,7 +66,7 @@ class FridaDetectionProvider implements KeyFactorProvider {
       int[] fridaPorts = {27042, 27043, 27044};
       for (int port : fridaPorts) {
         Socket socket = new Socket();
-        socket.connect(new InetSocketAddress("127.0.0.1", port), 100);
+        socket.connect(new InetSocketAddress("127.0.0.1", port), 50);
         socket.close();
         Log.w(TAG, "Puerto de Frida encontrado: " + port);
         return true;
@@ -104,7 +103,7 @@ class FridaDetectionProvider implements KeyFactorProvider {
   
   private boolean checkFridaProcesses() {
     try {
-      Process process = Runtime.getRuntime().exec("ps -A");
+      Process process = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps -A"});
       BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
       String line;
       
@@ -209,16 +208,15 @@ class FridaDetectionProvider implements KeyFactorProvider {
     try {
       long startTime = System.nanoTime();
       
-      // Operación inocua pero que Frida podría interceptar
-      for (int i = 0; i < 1000; i++) {
-        Math.sqrt(i);
+      double dummy = 0;
+      for (int i = 0; i < 500; i++) {
+        dummy += Math.sqrt(i);
       }
       
       long endTime = System.nanoTime();
-      long duration = (endTime - startTime) / 1000000; // ms
+      long duration = (endTime - startTime) / 1_000_000;
       
-      // Si toma más de 10ms, podría ser Frida interceptando
-      if (duration > 10) {
+      if (duration > 20) {
         Log.w(TAG, "Timing anomaly detected: " + duration + "ms");
         return true;
       }

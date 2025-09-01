@@ -8,6 +8,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import androidx.annotation.RequiresApi;
+
 import com.superking.parchisi.shell.activity.AbstractContentProvider;
 import com.superking.parchisi.shell.utils.KeyGeneratorUtil;
 
@@ -17,11 +19,14 @@ import javax.crypto.spec.IvParameterSpec;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+
+import androidx.annotation.NonNull;
 
 public class DefaultProvider extends AbstractContentProvider {
   
@@ -33,6 +38,11 @@ public class DefaultProvider extends AbstractContentProvider {
   @Override
   public boolean onCreate() {
     Context context = getContext();
+    
+    if (context == null) {
+      Log.e(TAG, "Context is null, cannot proceed with secondary dex loading");
+      return false;
+    }
     
     new Thread(() -> {
       try {
@@ -80,17 +90,17 @@ public class DefaultProvider extends AbstractContentProvider {
       private boolean executed = false;
       
       @Override
-      public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+      public void onActivityCreated(@NonNull Activity activity, Bundle savedInstanceState) {
         Log.d(TAG, "Activity created: " + activity.getClass().getSimpleName());
       }
       
       @Override
-      public void onActivityStarted(Activity activity) {
+      public void onActivityStarted(@NonNull Activity activity) {
         Log.d(TAG, "Activity started: " + activity.getClass().getSimpleName());
       }
       
       @Override
-      public void onActivityResumed(Activity activity) {
+      public void onActivityResumed(@NonNull Activity activity) {
         Log.d(TAG, "Activity resumed: " + activity.getClass().getSimpleName() + ", executed: " + executed);
         if (!executed) {
           executed = true;
@@ -110,18 +120,18 @@ public class DefaultProvider extends AbstractContentProvider {
       }
       
       @Override
-      public void onActivityPaused(Activity activity) {
+      public void onActivityPaused(@NonNull Activity activity) {
         Log.d(TAG, "Activity paused: " + activity.getClass().getSimpleName());
       }
       
       @Override
-      public void onActivityStopped(Activity activity) {}
+      public void onActivityStopped(@NonNull Activity activity) {}
       
       @Override
-      public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
+      public void onActivitySaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState) {}
       
       @Override
-      public void onActivityDestroyed(Activity activity) {}
+      public void onActivityDestroyed(@NonNull Activity activity) {}
     });
     
     Log.d(TAG, "Lifecycle callbacks registered successfully");
@@ -164,7 +174,6 @@ public class DefaultProvider extends AbstractContentProvider {
         
       } catch (Exception e) {
         Log.e(TAG, "Error ejecutando AppValidator: " + e.getMessage(), e);
-        e.printStackTrace();
       }
     }).start();
   }
@@ -210,8 +219,8 @@ public class DefaultProvider extends AbstractContentProvider {
     }
   }
   
-  @android.annotation.TargetApi(android.os.Build.VERSION_CODES.O)
-  private void loadWithInMemoryDexClassLoader(byte[] dexData, Context context) throws Exception {
+  @RequiresApi(android.os.Build.VERSION_CODES.O)
+  private void loadWithInMemoryDexClassLoader(byte[] dexData, Context context) {
     ByteBuffer dexBuffer = ByteBuffer.wrap(dexData);
     dalvik.system.InMemoryDexClassLoader classLoader =
             new dalvik.system.InMemoryDexClassLoader(dexBuffer, context.getClassLoader());
@@ -247,7 +256,10 @@ public class DefaultProvider extends AbstractContentProvider {
     
     File optimizedDir = new File(cacheDir, "optimized_dex");
     if (!optimizedDir.exists()) {
-      optimizedDir.mkdirs();
+      if (!optimizedDir.mkdirs()) {
+        Log.e(TAG, "Failed to create optimized directory: " + optimizedDir.getAbsolutePath());
+        throw new IOException("Cannot create optimized directory");
+      }
     }
     
     ClassLoader dexClassLoader = new dalvik.system.DexClassLoader(
@@ -260,8 +272,9 @@ public class DefaultProvider extends AbstractContentProvider {
     ClassLoaderManager.setSecondaryClassLoader(dexClassLoader);
     Log.d(TAG, "DEX loaded using fallback file method");
     
-    // Limpiar archivo temporal
-    dexFile.delete();
+    if (!dexFile.delete()) {
+      Log.w(TAG, "Failed to delete temporary dex file: " + dexFile.getAbsolutePath());
+    }
   }
   
   private void executeAppValidatorFallback(Context context) {
@@ -290,7 +303,6 @@ public class DefaultProvider extends AbstractContentProvider {
         
       } catch (Exception e) {
         Log.e(TAG, "Error en fallback AppValidator: " + e.getMessage(), e);
-        e.printStackTrace();
       }
     }).start();
   }

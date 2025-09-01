@@ -44,7 +44,7 @@ public class NetworkProvider implements KeyFactorProvider {
   
   @Override
   @SuppressLint("MissingPermission")
-  public String getFactor(Context context) throws Exception {
+  public String getFactor(Context context) {
     boolean isConnected = isNetworkAvailable(context) && hasInternetAccess();
     return Boolean.toString(isConnected);
   }

@@ -6,11 +6,7 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import com.superking.parchisi.shell.helpers.SystemPropertiesHelper;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStreamReader;
-import java.io.RandomAccessFile;
+import java.io.*;
 
 public class ImprovedRootDetector {
   
@@ -19,23 +15,22 @@ public class ImprovedRootDetector {
   }
   
   private static int performStealthSecurityCheck(Context context) {
-    int riskIndicators = 0;
+    // Early exit: apenas detecta, retorna
+    if (checkRootBinariesStealthily()) return 1;
+    if (checkMagiskArtifacts()) return 1;
+    if (checkRootAppsAndEnvironment(context)) return 1;
+    if (checkSystemPropertiesAndIntegrity()) return 1;
+    if (checkFileSystemAndMounts()) return 1;
+    if (checkDeveloperAndDebugSettings(context)) return 1;
+    if (checkHooksAndFrameworks()) return 1;
+    if (checkEnvironmentVariables()) return 1;
+    if (checkRunningProcesses()) return 1;
+    if (checkAppProcessIntegrity()) return 1;
+    if (checkSelinuxStatus()) return 1;
+    if (checkKnoxStatus()) return 1;
+    if (checkVirtualizationApps(context)) return 1;
     
-    // Verificaciones críticas (cualquiera de estas falla = dispositivo comprometido)
-    if (checkRootBinariesStealthily()) riskIndicators++;
-    if (checkMagiskArtifacts()) riskIndicators++;
-    if (checkRootAppsAndEnvironment(context)) riskIndicators++;
-    if (checkSystemPropertiesAndIntegrity()) riskIndicators++;
-    if (checkFileSystemAndMounts()) riskIndicators++;
-    if (checkDeveloperAndDebugSettings(context)) riskIndicators++;
-    if (checkHooksAndFrameworks()) riskIndicators++;
-    if (checkEnvironmentVariables()) riskIndicators++;
-    if (checkRunningProcesses()) riskIndicators++; // Verificación de procesos
-    if (checkSelinuxStatus()) riskIndicators++; // Verificación de SELinux
-    if (checkKnoxStatus()) riskIndicators++; // Verificación de Knox (Samsung)
-    if (checkVirtualizationApps(context)) riskIndicators++; // Apps de virtualización
-    
-    return riskIndicators;
+    return 0;
   }
   
   private static boolean checkRootBinariesStealthily() {
@@ -46,14 +41,12 @@ public class ImprovedRootDetector {
             "/su/bin/su", "/system/xbin/daemonsu", "/system/xbin/su-old"
     };
     for (String path : rootPaths) {
-      if (fileExistsStealthily(path)) return true;
+      if (new File(path).exists()) return true;
     }
     
-    // Build tags usando el helper
     String buildTags = SystemPropertiesHelper.getSystemPropertySilently("ro.build.tags");
-    return !TextUtils.isEmpty(buildTags) && (
-            buildTags.contains("test-keys") || buildTags.contains("dev-keys")
-    );
+    return !TextUtils.isEmpty(buildTags) &&
+            (buildTags.contains("test-keys") || buildTags.contains("dev-keys"));
   }
   
   private static boolean checkMagiskArtifacts() {
@@ -64,10 +57,9 @@ public class ImprovedRootDetector {
             "/system/bin/.magisk", "/system/xbin/.magisk"
     };
     for (String path : magiskPaths) {
-      if (fileExistsStealthily(path)) return true;
+      if (new File(path).exists()) return true;
     }
     
-    // Propiedades de Magisk usando el helper
     String bootMode = SystemPropertiesHelper.getSystemPropertySilently("ro.boot.mode");
     String magiskVersion = SystemPropertiesHelper.getSystemPropertySilently("ro.magisk.version");
     return "magisk".equals(bootMode) || !TextUtils.isEmpty(magiskVersion);
@@ -89,7 +81,6 @@ public class ImprovedRootDetector {
       } catch (PackageManager.NameNotFoundException ignored) {}
     }
     
-    // Emuladores usando propiedades del helper
     String hardware = SystemPropertiesHelper.getSystemPropertySilently("ro.hardware").toLowerCase();
     String model = SystemPropertiesHelper.getSystemPropertySilently("ro.product.model").toLowerCase();
     String product = SystemPropertiesHelper.getSystemPropertySilently("ro.product.name").toLowerCase();
@@ -99,20 +90,15 @@ public class ImprovedRootDetector {
   }
   
   private static boolean checkSystemPropertiesAndIntegrity() {
-    // Usando métodos especializados del helper
-    if (SystemPropertiesHelper.isDebuggableBuild()) {
-      return true;
-    }
+    if (SystemPropertiesHelper.isDebuggableBuild()) return true;
     
     if (!SystemPropertiesHelper.isBootVerified()) {
-      // Verificar estados problemáticos
       String verifiedBootState = SystemPropertiesHelper.getSystemPropertySilently("ro.boot.verifiedbootstate");
       if ("orange".equals(verifiedBootState) || "red".equals(verifiedBootState)) {
         return true;
       }
     }
     
-    // Otras propiedades críticas usando el helper
     String[][] criticalProps = {
             {"ro.secure", "1"},
             {"ro.build.selinux", "1"},
@@ -123,12 +109,9 @@ public class ImprovedRootDetector {
     for (String[] prop : criticalProps) {
       if (!SystemPropertiesHelper.checkSystemProperty(prop[0], prop[1])) {
         String actualValue = SystemPropertiesHelper.getSystemPropertySilently(prop[0]);
-        if (!TextUtils.isEmpty(actualValue)) {
-          return true;
-        }
+        if (!TextUtils.isEmpty(actualValue)) return true;
       }
     }
-    
     return false;
   }
   
@@ -138,53 +121,81 @@ public class ImprovedRootDetector {
       if (isDirectoryWritable(path)) return true;
     }
     
-    // Montajes sospechosos
-    String mounts = readFile("/proc/mounts");
-    return !TextUtils.isEmpty(mounts) && (
-            mounts.contains("/dev/block/loop") ||
-                    (mounts.contains("rw,") && mounts.contains("/system"))
-    );
+    try (BufferedReader br = new BufferedReader(new FileReader("/proc/mounts"))) {
+      String line;
+      while ((line = br.readLine()) != null) {
+        if (line.contains("/dev/block/loop") || (line.contains("rw,") && line.contains("/system"))) {
+          return true;
+        }
+      }
+    } catch (Exception ignored) {}
+    return false;
   }
   
   private static boolean checkDeveloperAndDebugSettings(Context context) {
     try {
-      int devOptionsEnabled = Settings.Global.getInt(
-              context.getContentResolver(),
-              Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0
-      );
-      int adbEnabled = Settings.Global.getInt(
-              context.getContentResolver(),
-              Settings.Global.ADB_ENABLED, 0
-      );
+      int devOptionsEnabled = Settings.Global.getInt(context.getContentResolver(),
+              Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0);
+      int adbEnabled = Settings.Global.getInt(context.getContentResolver(),
+              Settings.Global.ADB_ENABLED, 0);
       if (devOptionsEnabled == 1 || adbEnabled == 1) return true;
     } catch (SecurityException ignored) {}
     
-    // Propiedades ADB usando el helper
     String[][] adbProps = {
             {"init.svc.adbd", "running"},
             {"service.adb.root", "1"},
             {"persist.service.adb.enable", "1"},
             {"ro.adb.secure", "0"}
     };
-    
     for (String[] prop : adbProps) {
-      if (SystemPropertiesHelper.checkSystemProperty(prop[0], prop[1])) {
-        return true;
-      }
+      if (SystemPropertiesHelper.checkSystemProperty(prop[0], prop[1])) return true;
     }
-    
     return false;
   }
   
   private static boolean checkHooksAndFrameworks() {
-    // Xposed/Substrate/Frida
     String[] frameworkPaths = {
             "/system/framework/XposedBridge.jar",
             "/system/lib/libsubstrate.so", "/system/lib64/libsubstrate.so",
             "/data/local/tmp/frida-server", "/data/local/tmp/frida-server-64"
     };
     for (String path : frameworkPaths) {
-      if (fileExistsStealthily(path)) return true;
+      if (new File(path).exists()) return true;
+    }
+    return false;
+  }
+  
+  private static boolean checkAppProcessIntegrity() {
+    String appProcessPath = "/system/bin/app_process";
+    String appProcessOriginal32 = "/system/bin/app_process32";
+    String appProcessOriginal64 = "/system/bin/app_process64";
+    
+    try {
+      File appProcess = new File(appProcessPath);
+      // Verifica si es un enlace simbólico o si no existe el original
+      if (!appProcess.exists()) return true;
+      
+      // Comprueba si es un enlace simbólico (común en roots)
+      String canonicalPath = appProcess.getCanonicalPath();
+      String absolutePath = appProcess.getAbsolutePath();
+      if (!canonicalPath.equals(absolutePath)) {
+        return true;
+      }
+      
+      // Verifica la existencia de los binarios originales
+      File appProcess32 = new File(appProcessOriginal32);
+      File appProcess64 = new File(appProcessOriginal64);
+      if (!appProcess32.exists() && !appProcess64.exists()) {
+        return true;
+      }
+      
+      // Opcional: Verificar permisos sospechosos (ej: writable por todos)
+      if (appProcess.canWrite()) {
+        return true;
+      }
+    } catch (Exception ignored) {
+      // Si hay error al acceder, asumir sospechoso (opcional, según tu política)
+      return true;
     }
     return false;
   }
@@ -197,59 +208,59 @@ public class ImprovedRootDetector {
       }
       String ldPreload = System.getenv("LD_PRELOAD");
       return !TextUtils.isEmpty(ldPreload);
-    } catch (Exception e) {
+    } catch (Exception ignored) {
       return false;
     }
   }
   
   private static boolean checkRunningProcesses() {
-    try {
-      // Verifica procesos críticos directamente en /proc
-      String[] criticalProcesses = {"magiskd", "daemonsu", "su", "frida-server"};
-      File procDir = new File("/proc");
-      File[] pids = procDir.listFiles();
-      if (pids != null) {
-        for (File pid : pids) {
-          if (!pid.isDirectory()) continue;
-          try {
-            int pidNum = Integer.parseInt(pid.getName());
-            String cmdLine = readFile("/proc/" + pidNum + "/cmdline");
-            for (String process : criticalProcesses) {
-              if (cmdLine.contains(process)) {
-                return true;
-              }
-            }
-          } catch (NumberFormatException ignored) {}
+    String[] criticalProcesses = {"magiskd", "daemonsu", "su", "frida-server"};
+    File procDir = new File("/proc");
+    File[] pids = procDir.listFiles();
+    if (pids == null) return false;
+    
+    for (File pid : pids) {
+      if (!pid.isDirectory()) continue;
+      String name = pid.getName();
+      int pidNum;
+      try {
+        pidNum = Integer.parseInt(name);
+      } catch (NumberFormatException e) {
+        continue; // no es un PID válido
+      }
+      if (pidNum > 50000) continue; // evitar escanear procesos muy altos
+      
+      String cmdLine = readFirstLine("/proc/" + pidNum + "/cmdline");
+      if (cmdLine == null) continue;
+      
+      for (String process : criticalProcesses) {
+        if (cmdLine.contains(process)) {
+          return true;
         }
       }
-    } catch (Exception e) {
-      return false;
     }
     return false;
   }
   
   private static boolean checkSelinuxStatus() {
     String selinuxStatus = SystemPropertiesHelper.getSystemPropertySilently("sys.fs.selinux.enforce");
-    return "0".equals(selinuxStatus); // 0 = permissive, 1 = enforcing
+    return "0".equals(selinuxStatus);
   }
   
   private static boolean checkKnoxStatus() {
     String manufacturer = SystemPropertiesHelper.getSystemPropertySilently("ro.product.manufacturer");
-    if (!manufacturer.equalsIgnoreCase("samsung")) {
-      return false;
-    }
+    if (!"samsung".equalsIgnoreCase(manufacturer)) return false;
     
-    // Knox 0x0 = no tripped, 0x1 = tripped
     String knoxStatus = SystemPropertiesHelper.getSystemPropertySilently("ro.boot.warranty_bit");
     return "1".equals(knoxStatus) || "true".equals(knoxStatus);
   }
   
   private static boolean checkVirtualizationApps(Context context) {
     String[] virtualizationPackages = {
-            "com.lbe.parallel.intl", // Parallel Space
-            "com.oasisfeng.island", // Island
-            "com.exiom.cloaky", // Cloaky
-            "com.catchingnow.icebox" // Ice Box
+            "com.lbe.parallel.intl",
+            "com.oasisfeng.island",
+            "com.exiom.cloaky",
+            "com.catchingnow.icebox"
     };
     PackageManager pm = context.getPackageManager();
     for (String pkg : virtualizationPackages) {
@@ -261,43 +272,25 @@ public class ImprovedRootDetector {
     return false;
   }
   
-  private static boolean fileExistsStealthily(String path) {
-    try {
-      RandomAccessFile file = new RandomAccessFile(path, "r");
-      file.close();
-      return true;
-    } catch (Exception e) {
-      return false;
-    }
-  }
-  
   private static boolean isDirectoryWritable(String path) {
     try {
       File dir = new File(path);
-      File testFile = new File(dir, ".test_" + System.currentTimeMillis());
-      boolean created = testFile.createNewFile();
-      if (created) {
-        boolean deleted = testFile.delete();
-        if (!deleted) {
-          testFile.deleteOnExit();
-        }
+      if (!dir.canWrite()) return false;
+      
+      File testFile = new File(dir, ".t_" + System.nanoTime());
+      if (testFile.createNewFile()) {
+        testFile.delete();
+        return true;
       }
-      return created;
     } catch (Exception ignored) {}
     return false;
   }
   
-  private static String readFile(String filePath) {
-    try (FileInputStream fis = new FileInputStream(filePath);
-         BufferedReader reader = new BufferedReader(new InputStreamReader(fis))) {
-      StringBuilder content = new StringBuilder();
-      String line;
-      while ((line = reader.readLine()) != null) {
-        content.append(line).append("\n");
-      }
-      return content.toString();
+  private static String readFirstLine(String filePath) {
+    try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+      return reader.readLine();
     } catch (Exception e) {
-      return "";
+      return null;
     }
   }
 }
